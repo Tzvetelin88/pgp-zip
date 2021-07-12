@@ -6,55 +6,67 @@ import fs from 'fs'
 // openpgp.config.showVersion = false;
 // openpgp.config.showComment = false;
 // openpgp.config.allowUnauthenticatedStream = true;
+const passphrase =  "super long and hard to guess secret";
 
 (async () => {
-  let { privateKeyArmored, publicKeyArmored, revocationCertificate } =
+  let { privateKeyArmored, publicKeyArmored } =
     await openpgp.generateKey({
       type: "ecc", // Type of the key, defaults to ECC
       curve: "curve25519", // ECC curve name, defaults to curve25519
       userIDs: [{ name: "Jon Smith", email: "jon@example.com" }], // you can pass multiple user IDs
-      passphrase: "super long and hard to guess secret", // protects the private key
+      passphrase: passphrase, // protects the private key
     });
 
-    // For POC I don't use Keys for the moment, only password
-    // await encryptFileAndCreateReplacement('test.zip', 'asdasdasdsada');
-    await decryptFileAndCreateReplacement('test-enc.zip', 'asdasdasdsada');
+    await encryptFileAndCreateReplacement('test.zip', publicKeyArmored);
+    await decryptFileAndCreateReplacement('test-enc.zip', privateKeyArmored);
 
 })();
 
 openpgp.config.allowUnauthenticatedStream = true;
 
 
-async function encryptFileSym(fileBuffer: Buffer, secret: string) {
+async function encryptFileSym(fileBuffer: Buffer, publicKey: string) {
   const message = await openpgp.createMessage({ binary: fileBuffer });
+
+  const publicKeyRead = await openpgp.readKey({ armoredKey: publicKey })
+
   return await openpgp.encrypt({
       message: message,
-      passwords: [secret],
+      // signingKeys: privateKey // optional
+      encryptionKeys: publicKeyRead,
       armor: false,
   });
 }
 
-async function decryptFileSym(fileBuffer: Buffer, secret: string) {
+async function decryptFileSym(fileBuffer: Buffer, privateKey: string) {
   const message = await openpgp.readMessage({ binaryMessage: fileBuffer });
+
+  const privateKeyRead = await openpgp.decryptKey({
+      privateKey: await openpgp.readPrivateKey({ armoredKey: privateKey }),
+      passphrase
+  });
+
   return await openpgp.decrypt({
       message: message,
-      passwords: [secret], // decrypt with password
-      format: 'binary' // output as Uint8Array
+      // verificationKeys: publicKey, // optional
+      expectSigned: false,
+      decryptionKeys: privateKeyRead,
+      format: 'binary'
   });
 }
 
-async function encryptFileAndCreateReplacement(filename: string, secret: string) {
+async function encryptFileAndCreateReplacement(filename: string, publicKey: string) {
   const newFileName = filename.split('.')[0] + "-enc.zip";
 
   const oldFileBuff = fs.readFileSync(filename);
-  const encryptedData = await encryptFileSym(oldFileBuff, secret);
+  const encryptedData = await encryptFileSym(oldFileBuff, publicKey);
   fs.appendFileSync(newFileName, Buffer.from(encryptedData));
 }
 
-async function decryptFileAndCreateReplacement(filename: string, secret: string) {
+async function decryptFileAndCreateReplacement(filename: string, privateKey: string) {
   const newFileName = filename.replace("enc", "dec");
 
   const oldFileBuff = fs.readFileSync(filename);
-  const encryptedData = await decryptFileSym(oldFileBuff, secret);
+  const encryptedData = await decryptFileSym(oldFileBuff, privateKey);
   fs.writeFileSync(newFileName, Buffer.from(encryptedData.data))
 }
